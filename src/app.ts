@@ -14,6 +14,7 @@ import chatRoutes from './routes/chatRoutes';
 import recommendationRoutes from './routes/recommendationRoutes';
 import analyticsRoutes from './routes/analyticsRoutes';
 import newsletterRoutes from './routes/newsletterRoutes';
+import { connectDB } from './config/db';
 
 const app = express();
 
@@ -57,6 +58,19 @@ const limiter = rateLimit({
   legacyHeaders: false,
 });
 app.use('/api', limiter);
+
+// ─── ENSURE DB CONNECTION (critical for serverless cold starts) ───────
+// connectDB() is idempotent (caches the connection internally), so this
+// is cheap on every request after the first successful connection.
+app.use('/api', async (req, res, next) => {
+  try {
+    await connectDB();
+    next();
+  } catch (err) {
+    console.error('DB connection failed:', err);
+    res.status(503).json({ success: false, message: 'Database connection unavailable. Please try again.' });
+  }
+});
 
 // Basic middlewares
 app.use(express.json());

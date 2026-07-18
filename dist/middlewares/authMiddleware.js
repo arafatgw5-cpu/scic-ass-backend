@@ -9,24 +9,43 @@ const mongoose_1 = __importDefault(require("mongoose"));
 const User_1 = require("../models/User");
 const protect = async (req, res, next) => {
     // 1. Get token from either cookie or Authorization header
-    let betterAuthToken = req.cookies && req.cookies['better-auth.session_token'];
+    let betterAuthToken = req.cookies && (req.cookies['better-auth.session_token'] || req.cookies['__Secure-better-auth.session_token']);
     let bearerToken = null;
     if (req.headers.authorization && req.headers.authorization.startsWith('Bearer')) {
         bearerToken = req.headers.authorization.split(' ')[1];
-        // If the bearer token doesn't look like a JWT (no dots), treat it as a Better Auth token
-        if (bearerToken && !bearerToken.includes('.')) {
-            betterAuthToken = bearerToken;
+        // JWTs have exactly 2 dots (3 parts: header.payload.signature)
+        // Better Auth signed cookies have 1 dot (2 parts: token.signature) or 0 dots
+        if (bearerToken) {
+            const dotCount = (bearerToken.match(/\./g) || []).length;
+            if (dotCount !== 2) {
+                betterAuthToken = bearerToken;
+            }
         }
     }
     // Extract the actual token from the signed cookie format (token.signature)
     if (betterAuthToken && betterAuthToken.includes('.')) {
         betterAuthToken = betterAuthToken.split('.')[0];
     }
+    // Ensure it's URL decoded (Next.js or frontend might pass it URL encoded)
+    if (betterAuthToken) {
+        try {
+            betterAuthToken = decodeURIComponent(betterAuthToken);
+        }
+        catch (e) { }
+    }
     // 2. Check for Better Auth session
     if (betterAuthToken) {
         try {
             const sessionCollection = mongoose_1.default.connection.collection('session');
-            const session = await sessionCollection.findOne({ token: betterAuthToken });
+            // Check both raw and hashed token
+            const crypto = require('crypto');
+            const hashedToken = crypto.createHash('sha256').update(betterAuthToken).digest('hex');
+            const session = await sessionCollection.findOne({
+                $or: [
+                    { token: betterAuthToken },
+                    { token: hashedToken }
+                ]
+            });
             if (session && session.expiresAt > new Date()) {
                 const usersCollection = mongoose_1.default.connection.collection('user');
                 // Handle both string and ObjectId userId from Better Auth
@@ -48,6 +67,14 @@ const protect = async (req, res, next) => {
                         role: userDoc.role || 'user',
                     };
                     return next();
+                }
+            }
+            else {
+                // If it's explicitly a betterAuthToken but invalid/expired, we shouldn't fallback to JWT
+                // because it will just throw "token failed" anyway. We can just return 401 here.
+                if (!req.headers.authorization?.startsWith('Bearer')) {
+                    res.status(401).json({ success: false, message: 'Not authorized, session expired' });
+                    return;
                 }
             }
         }

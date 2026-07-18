@@ -19,6 +19,7 @@ const chatRoutes_1 = __importDefault(require("./routes/chatRoutes"));
 const recommendationRoutes_1 = __importDefault(require("./routes/recommendationRoutes"));
 const analyticsRoutes_1 = __importDefault(require("./routes/analyticsRoutes"));
 const newsletterRoutes_1 = __importDefault(require("./routes/newsletterRoutes"));
+const db_1 = require("./config/db");
 const app = (0, express_1.default)();
 // Set up allowed origins
 const allowedOrigins = [
@@ -31,6 +32,9 @@ app.use((0, cors_1.default)({
         // Allow requests with no origin (like mobile apps or curl requests)
         if (!origin)
             return callback(null, true);
+        // Allow any Vercel preview deployment
+        if (origin.endsWith('.vercel.app'))
+            return callback(null, true);
         if (allowedOrigins.indexOf(origin) !== -1 || process.env.NODE_ENV === 'development') {
             callback(null, true);
         }
@@ -41,7 +45,7 @@ app.use((0, cors_1.default)({
     credentials: true,
 }));
 // Handle OPTIONS preflight requests
-app.options('*', (0, cors_1.default)());
+app.options(/.*/, (0, cors_1.default)());
 app.use((0, helmet_1.default)());
 app.use((0, compression_1.default)());
 app.use((0, cookie_parser_1.default)());
@@ -56,6 +60,19 @@ const limiter = (0, express_rate_limit_1.default)({
     legacyHeaders: false,
 });
 app.use('/api', limiter);
+// ─── ENSURE DB CONNECTION (critical for serverless cold starts) ───────
+// connectDB() is idempotent (caches the connection internally), so this
+// is cheap on every request after the first successful connection.
+app.use('/api', async (req, res, next) => {
+    try {
+        await (0, db_1.connectDB)();
+        next();
+    }
+    catch (err) {
+        console.error('DB connection failed:', err);
+        res.status(503).json({ success: false, message: 'Database connection unavailable. Please try again.' });
+    }
+});
 // Basic middlewares
 app.use(express_1.default.json());
 app.use(express_1.default.urlencoded({ extended: true }));

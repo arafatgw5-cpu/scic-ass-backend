@@ -10,11 +10,13 @@ import { protect } from '../middlewares/authMiddleware';
 
 const router = express.Router();
 
-router.use(protect);
-
+// Public routes (no authentication required)
 router.get('/', getCareers);
-router.get('/saved', getSavedCareers);
 router.get('/:id', getCareerById);
+
+// Protected routes (authentication required)
+router.use(protect);
+router.get('/saved', getSavedCareers);
 router.post('/:id/save', saveCareer);
 router.delete('/:id/unsave', unsaveCareer);
 

@@ -1,6 +1,6 @@
 "use strict";
 Object.defineProperty(exports, "__esModule", { value: true });
-exports.chatWithAI = exports.parseResume = exports.getCareerRecommendations = exports.createResume = void 0;
+exports.analyzeImage = exports.chatWithAI = exports.parseResume = exports.getCareerRecommendations = exports.createResume = void 0;
 const aiService_1 = require("../services/aiService");
 // ─── GENERATE RESUME ───────────────────────────────────────────────
 const createResume = async (req, res) => {
@@ -15,11 +15,7 @@ const createResume = async (req, res) => {
             return;
         }
         const aiResume = await (0, aiService_1.generateResume)(targetJob.trim(), skills, experience || [], projects || [], education || [], achievements || []);
-        res.json({
-            success: true,
-            message: 'Resume generated successfully',
-            data: aiResume,
-        });
+        res.json({ success: true, message: 'Resume generated successfully', data: aiResume });
     }
     catch (error) {
         handleAIError(res, error);
@@ -31,11 +27,7 @@ const getCareerRecommendations = async (req, res) => {
     try {
         const { resumeData, savedCareers } = req.body;
         const result = await (0, aiService_1.recommendCareers)(resumeData || null, savedCareers || []);
-        res.json({
-            success: true,
-            message: 'Career recommendations generated successfully',
-            data: result.recommendations,
-        });
+        res.json({ success: true, message: 'Career recommendations generated successfully', data: result.recommendations });
     }
     catch (error) {
         handleAIError(res, error);
@@ -55,11 +47,7 @@ const parseResume = async (req, res) => {
             return;
         }
         const analysis = await (0, aiService_1.analyzeResume)(resumeText.trim());
-        res.json({
-            success: true,
-            message: 'Resume analyzed successfully',
-            data: analysis,
-        });
+        res.json({ success: true, message: 'Resume analyzed successfully', data: analysis });
     }
     catch (error) {
         handleAIError(res, error);
@@ -74,7 +62,6 @@ const chatWithAI = async (req, res) => {
             res.status(400).json({ success: false, message: 'Message is required.' });
             return;
         }
-        // Set SSE headers
         res.setHeader('Content-Type', 'text/event-stream');
         res.setHeader('Cache-Control', 'no-cache');
         res.setHeader('Connection', 'keep-alive');
@@ -90,7 +77,6 @@ const chatWithAI = async (req, res) => {
         res.end();
     }
     catch (error) {
-        // If headers already sent (streaming started), write error to stream
         if (res.headersSent) {
             const msg = error instanceof aiService_1.GeminiError ? error.message : 'An unexpected error occurred.';
             res.write(`data: ${JSON.stringify({ error: msg })}\n\n`);
@@ -102,28 +88,64 @@ const chatWithAI = async (req, res) => {
     }
 };
 exports.chatWithAI = chatWithAI;
+// ─── ANALYZE IMAGE (Groq Vision) - FULLY LOGGED ───────────────────
+const analyzeImage = async (req, res) => {
+    const startTime = Date.now();
+    console.log("🚀 [Vision API] Request received at /api/ai/vision");
+    try {
+        if (!req.file) {
+            console.error("❌ [Vision API] No file found in req.file");
+            res.status(400).json({ success: false, message: 'No image file was uploaded. Please attach an image.' });
+            return;
+        }
+        const { buffer, mimetype, size, originalname } = req.file;
+        console.log(`📦 [Vision API] File received: ${originalname}, Type: ${mimetype}, Size: ${size} bytes`);
+        if (!buffer || size === 0) {
+            res.status(400).json({ success: false, message: 'Uploaded image is empty.' });
+            return;
+        }
+        const userPrompt = typeof req.body?.prompt === 'string' ? req.body.prompt.trim() : 'Describe this image in detail.';
+        console.log(`💬 [Vision API] User Prompt: "${userPrompt}"`);
+        const base64Image = buffer.toString('base64');
+        const dataUrl = `data:${mimetype};base64,${base64Image}`;
+        console.log("🔄 [Vision API] Calling analyzeImageWithGroq service...");
+        const { analysis, imageType, modelUsed } = await (0, aiService_1.analyzeImageWithGroq)(dataUrl, mimetype, userPrompt);
+        console.log("✅ [Vision API] Groq analysis successful!");
+        res.json({
+            success: true,
+            analysis,
+            model: modelUsed,
+            processingTime: `${Date.now() - startTime}ms`,
+            imageType,
+        });
+    }
+    catch (error) {
+        // 🔥 এই লাইনটি সবচেয়ে গুরুত্বপূর্ণ: এটি Vercel Logs-এ আসল এরর দেখাবে
+        console.error("❌ [Vision API] CRITICAL ERROR:", error);
+        console.error("❌ [Vision API] Error Stack:", error instanceof Error ? error.stack : 'No stack trace');
+        handleAIError(res, error);
+    }
+};
+exports.analyzeImage = analyzeImage;
 // ─── CENTRALIZED ERROR HANDLER ─────────────────────────────────────
 function handleAIError(res, error) {
     if (error instanceof aiService_1.GeminiError) {
         console.error(`[AI Controller] GeminiError (${error.status}): ${error.message}`);
         res.status(error.status).json({
             success: false,
-            message: process.env.NODE_ENV === 'production' ? 'Internal server error' : error.message,
+            message: process.env.NODE_ENV === 'production' ? 'AI service temporarily unavailable. Please try again.' : error.message,
         });
     }
     else if (error instanceof SyntaxError) {
         console.error(`[AI Controller] JSON Parse Error:`, error.message);
-        res.status(502).json({
-            success: false,
-            message: 'Gemini returned invalid JSON. Please try again.',
-        });
+        res.status(502).json({ success: false, message: 'Invalid response from AI provider.' });
     }
     else {
         const msg = error instanceof Error ? error.message : 'Unknown error';
         console.error(`[AI Controller] Unexpected Error:`, msg);
         res.status(500).json({
             success: false,
-            message: msg,
+            message: process.env.NODE_ENV === 'production' ? 'Internal server error' : msg,
         });
     }
 }

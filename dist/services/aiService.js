@@ -8,6 +8,7 @@ exports.generateResume = generateResume;
 exports.recommendCareers = recommendCareers;
 exports.analyzeResume = analyzeResume;
 exports.chatAssistantStream = chatAssistantStream;
+exports.analyzeImageWithGroq = analyzeImageWithGroq;
 const groq_sdk_1 = __importDefault(require("groq-sdk"));
 // ─── ENV CONFIG ────────────────────────────────────────────────
 const PRIMARY_MODEL = process.env.GROQ_MODEL || 'llama-3.3-70b-versatile';
@@ -214,5 +215,105 @@ async function* chatAssistantStream(history, message) {
     catch (error) {
         const classified = categorizeAIError(error);
         throw new GeminiError(classified.status, classified.message);
+    }
+}
+// ════════════════════════════════════════════════════════════════════
+// ─── IMAGE UNDERSTANDING (Groq Vision) ─────────────────────────────
+// Additive only — does not touch generateResume / recommendCareers /
+// analyzeResume / chatAssistantStream or their shared helpers above.
+// ════════════════════════════════════════════════════════════════════
+const PRIMARY_VISION_MODEL = process.env.GROQ_VISION_MODEL || 'meta-llama/llama-4-scout-17b-16e-instruct';
+const FALLBACK_VISION_MODEL = process.env.GROQ_VISION_FALLBACK_MODEL || 'meta-llama/llama-4-maverick-17b-128e-instruct';
+const IMAGE_REQUEST_TIMEOUT_MS = Number(process.env.GROQ_VISION_TIMEOUT_MS) || 30_000;
+function buildVisionPrompt(userPrompt) {
+    return `You are an expert AI vision analyst embedded in a career-coaching platform called SkillPilot.
+Carefully examine the attached image and produce a rich, well-organized analysis. Include only the sections below that are actually relevant to this image (skip ones that clearly don't apply):
+
+- Caption: one sentence summarizing the image.
+- Objects detected: notable objects, people, or elements visible.
+- Detailed explanation: a thorough description of the scene, content, and context.
+- Text in image (OCR): transcribe any readable text exactly as it appears.
+- UI explanation: if this is a screenshot of software/app/website, explain what the interface shows and how to use it.
+- Receipt summary: if this is a receipt or invoice, summarize merchant, items, amounts, and total.
+- Plant identification: if this shows a plant, identify the likely species and notable characteristics.
+- Error explanation: if this is an error message or error screenshot, explain the likely cause and how to fix it.
+- General description: a natural-language overview for anything not covered above.
+${userPrompt ? `\nThe user also asked specifically: "${userPrompt}"\nAddress this directly as part of your analysis.\n` : ''}
+Respond in EXACTLY this format, with no extra commentary before or after:
+IMAGE_TYPE: <one short label, e.g. screenshot, receipt, plant, error, document, photo, diagram, general>
+ANALYSIS:
+<your full analysis as well-formatted text>`;
+}
+function parseVisionResponse(raw) {
+    const typeMatch = raw.match(/IMAGE_TYPE:\s*(.+)/i);
+    const analysisMatch = raw.match(/ANALYSIS:\s*([\s\S]*)/i);
+    const imageType = typeMatch ? typeMatch[1].trim().split('\n')[0].trim() : 'general';
+    const analysis = analysisMatch ? analysisMatch[1].trim() : raw.trim();
+    return {
+        analysis: analysis || raw.trim(),
+        imageType: imageType || 'general',
+    };
+}
+function callWithTimeout(promise, ms) {
+    return new Promise((resolve, reject) => {
+        const timer = setTimeout(() => {
+            reject(new Error(`Request timeout after ${ms}ms`));
+        }, ms);
+        promise
+            .then((result) => {
+            clearTimeout(timer);
+            resolve(result);
+        })
+            .catch((err) => {
+            clearTimeout(timer);
+            reject(err);
+        });
+    });
+}
+async function callGroqVision(dataUrl, userPrompt, model) {
+    const client = getGroqClient();
+    const prompt = buildVisionPrompt(userPrompt);
+    const completion = await client.chat.completions.create({
+        model,
+        messages: [
+            {
+                role: 'user',
+                content: [
+                    { type: 'text', text: prompt },
+                    { type: 'image_url', image_url: { url: dataUrl } },
+                ],
+            },
+        ], // Groq SDK's OpenAI-style types don't yet model multi-part vision content
+        temperature: 0.4,
+        max_tokens: 1500,
+    });
+    const text = completion.choices[0]?.message?.content || '';
+    if (!text || !text.trim()) {
+        throw new Error('Empty response from Groq vision model');
+    }
+    return text;
+}
+// ─── ANALYZE IMAGE (with primary → fallback vision model) ──────────
+async function analyzeImageWithGroq(dataUrl, _mimeType, userPrompt) {
+    console.log(`[Groq Vision] Request — model: ${PRIMARY_VISION_MODEL}, prompt length: ${userPrompt.length}`);
+    try {
+        const raw = await callWithTimeout(callGroqVision(dataUrl, userPrompt, PRIMARY_VISION_MODEL), IMAGE_REQUEST_TIMEOUT_MS);
+        const { analysis, imageType } = parseVisionResponse(raw);
+        console.log(`[Groq Vision] Response — status: OK, length: ${analysis.length}`);
+        return { analysis, imageType, modelUsed: PRIMARY_VISION_MODEL };
+    }
+    catch (primaryError) {
+        console.warn(`[Groq Vision] Primary model "${PRIMARY_VISION_MODEL}" failed:`, primaryError instanceof Error ? primaryError.message : primaryError);
+        console.log(`[Groq Vision] Trying fallback model "${FALLBACK_VISION_MODEL}"...`);
+        try {
+            const raw = await callWithTimeout(callGroqVision(dataUrl, userPrompt, FALLBACK_VISION_MODEL), IMAGE_REQUEST_TIMEOUT_MS);
+            const { analysis, imageType } = parseVisionResponse(raw);
+            console.log(`[Groq Vision] Fallback response — status: OK, length: ${analysis.length}`);
+            return { analysis, imageType, modelUsed: FALLBACK_VISION_MODEL };
+        }
+        catch (fallbackError) {
+            const classified = categorizeAIError(fallbackError);
+            throw new GeminiError(classified.status, classified.message);
+        }
     }
 }
