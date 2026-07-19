@@ -7,20 +7,50 @@ exports.getSavedCareers = exports.unsaveCareer = exports.saveCareer = exports.ge
 const mongoose_1 = __importDefault(require("mongoose"));
 const Career_1 = require("../models/Career");
 const SavedCareer_1 = require("../models/SavedCareer");
-// Get all careers (with basic filtering)
+// Get all careers (with filtering and sorting)
 const getCareers = async (req, res) => {
     try {
-        const { category, experienceLevel } = req.query;
+        const { category, experienceLevel, location, jobType, search, sort } = req.query;
         let query = {};
-        if (category)
+        // Category Filter
+        if (category && category !== 'All')
             query.category = category;
-        if (experienceLevel)
+        // Experience Level Filter
+        if (experienceLevel && experienceLevel !== 'All')
             query.experienceLevel = experienceLevel;
-        const careers = await Career_1.Career.find(query);
+        // Location Filter (Partial match, case-insensitive)
+        if (location && location !== 'All') {
+            query.location = { $regex: location, $options: 'i' };
+        }
+        // Job Type Filter
+        if (jobType && jobType !== 'All')
+            query.jobType = jobType;
+        // Search (Title, Company, or Skills)
+        if (search) {
+            query.$or = [
+                { title: { $regex: search, $options: 'i' } },
+                { company: { $regex: search, $options: 'i' } },
+                { requiredSkills: { $regex: search, $options: 'i' } }
+            ];
+        }
+        // Sorting
+        let sortOptions = { createdAt: -1 }; // Default: newest first
+        if (sort === 'oldest')
+            sortOptions = { createdAt: 1 };
+        if (sort === 'salary-low')
+            sortOptions = { 'salaryRange.min': 1 };
+        if (sort === 'salary-high')
+            sortOptions = { 'salaryRange.max': -1 };
+        if (sort === 'rating')
+            sortOptions = { rating: -1 };
+        const careers = await Career_1.Career.find(query).sort(sortOptions);
         res.json({ success: true, data: careers });
     }
     catch (error) {
-        res.status(500).json({ success: false, message: process.env.NODE_ENV === 'production' ? 'Internal server error' : error.message });
+        res.status(500).json({
+            success: false,
+            message: process.env.NODE_ENV === 'production' ? 'Internal server error' : error.message
+        });
     }
 };
 exports.getCareers = getCareers;
@@ -36,7 +66,10 @@ const getCareerById = async (req, res) => {
         res.json({ success: true, data: career });
     }
     catch (error) {
-        res.status(500).json({ success: false, message: process.env.NODE_ENV === 'production' ? 'Internal server error' : error.message });
+        res.status(500).json({
+            success: false,
+            message: process.env.NODE_ENV === 'production' ? 'Internal server error' : error.message
+        });
     }
 };
 exports.getCareerById = getCareerById;
@@ -51,16 +84,25 @@ const saveCareer = async (req, res) => {
             res.status(404).json({ success: false, message: 'Career not found' });
             return;
         }
-        const existing = await SavedCareer_1.SavedCareer.findOne({ userId, careerId: new mongoose_1.default.Types.ObjectId(careerId) });
+        const existing = await SavedCareer_1.SavedCareer.findOne({
+            userId,
+            careerId: new mongoose_1.default.Types.ObjectId(careerId)
+        });
         if (existing) {
             res.status(400).json({ success: false, message: 'Career already saved' });
             return;
         }
-        const savedCareer = await SavedCareer_1.SavedCareer.create({ userId, careerId: new mongoose_1.default.Types.ObjectId(careerId) });
+        const savedCareer = await SavedCareer_1.SavedCareer.create({
+            userId,
+            careerId: new mongoose_1.default.Types.ObjectId(careerId)
+        });
         res.status(201).json({ success: true, data: savedCareer });
     }
     catch (error) {
-        res.status(500).json({ success: false, message: process.env.NODE_ENV === 'production' ? 'Internal server error' : error.message });
+        res.status(500).json({
+            success: false,
+            message: process.env.NODE_ENV === 'production' ? 'Internal server error' : error.message
+        });
     }
 };
 exports.saveCareer = saveCareer;
@@ -69,7 +111,10 @@ const unsaveCareer = async (req, res) => {
     try {
         const userId = req.user?.id;
         const { id: careerId } = req.params;
-        const deleted = await SavedCareer_1.SavedCareer.findOneAndDelete({ userId, careerId: new mongoose_1.default.Types.ObjectId(careerId) });
+        const deleted = await SavedCareer_1.SavedCareer.findOneAndDelete({
+            userId,
+            careerId: new mongoose_1.default.Types.ObjectId(careerId)
+        });
         if (!deleted) {
             res.status(404).json({ success: false, message: 'Saved career not found' });
             return;
@@ -77,7 +122,10 @@ const unsaveCareer = async (req, res) => {
         res.json({ success: true, data: {} });
     }
     catch (error) {
-        res.status(500).json({ success: false, message: process.env.NODE_ENV === 'production' ? 'Internal server error' : error.message });
+        res.status(500).json({
+            success: false,
+            message: process.env.NODE_ENV === 'production' ? 'Internal server error' : error.message
+        });
     }
 };
 exports.unsaveCareer = unsaveCareer;
@@ -89,7 +137,10 @@ const getSavedCareers = async (req, res) => {
         res.json({ success: true, data: savedCareers });
     }
     catch (error) {
-        res.status(500).json({ success: false, message: process.env.NODE_ENV === 'production' ? 'Internal server error' : error.message });
+        res.status(500).json({
+            success: false,
+            message: process.env.NODE_ENV === 'production' ? 'Internal server error' : error.message
+        });
     }
 };
 exports.getSavedCareers = getSavedCareers;

@@ -41,6 +41,15 @@ const careerSchema = new mongoose_1.Schema({
         required: true,
         trim: true,
     },
+    company: {
+        type: String,
+        required: true,
+        trim: true,
+    },
+    companyLogo: {
+        type: String,
+        default: '',
+    },
     category: {
         type: String,
         required: true,
@@ -49,6 +58,21 @@ const careerSchema = new mongoose_1.Schema({
     description: {
         type: String,
         required: true,
+    },
+    location: {
+        type: String,
+        required: true,
+    },
+    jobType: {
+        type: String,
+        enum: ['Remote', 'Hybrid', 'Onsite'],
+        default: 'Onsite',
+    },
+    rating: {
+        type: Number,
+        default: 4.0,
+        min: 0,
+        max: 5,
     },
     salaryRange: {
         min: { type: Number, required: true },

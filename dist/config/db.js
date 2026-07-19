@@ -5,12 +5,13 @@ var __importDefault = (this && this.__importDefault) || function (mod) {
 Object.defineProperty(exports, "__esModule", { value: true });
 exports.connectDB = void 0;
 const mongoose_1 = __importDefault(require("mongoose"));
-const cached = global.mongoose || { conn: null, promise: null };
-if (!global.mongoose) {
-    global.mongoose = cached;
+// ৩. ক্যাশ ইনিশিয়ালাইজ করা (যদি না থাকে তবে নতুন অবজেক্ট তৈরি হবে)
+const cached = global.mongooseCache || { conn: null, promise: null };
+if (!global.mongooseCache) {
+    global.mongooseCache = cached;
 }
 const connectDB = async () => {
-    // ১. যদি আগে থেকেই কানেকশন থাকে, তবে সেটি রিটার্ন করো (নতুন করে কানেক্ট করবে না)
+    // ৪. যদি আগে থেকেই কানেকশন থাকে, তবে সেটি রিটার্ন করো
     if (cached.conn) {
         console.log('=> using existing database connection');
         return cached.conn;
@@ -21,24 +22,25 @@ const connectDB = async () => {
             throw new Error('MONGODB_URI is not defined in environment variables');
         }
         const dbName = process.env.DB_NAME || 'scic-ass';
-        // ২. কানেকশন অপশনে bufferCommands: false যোগ করা হয়েছে (সবচেয়ে গুরুত্বপূর্ণ)
+        // ৫. bufferCommands: false যোগ করা হয়েছে (১০ সেকেন্ড টাইমআউট বন্ধ করার জন্য)
         const opts = {
             dbName,
             maxPoolSize: 10,
-            bufferCommands: false, // 🔥 এটি ১০ সেকেন্ডের টাইমআউট এরর বন্ধ করবে
+            bufferCommands: false,
         };
         if (!cached.promise) {
             cached.promise = mongoose_1.default.connect(mongoURI, opts);
         }
         cached.conn = await cached.promise;
+        // ৬. এখানে TypeScript এখন নিশ্চিত যে cached.conn null নয়, তাই এটি এরর দেবে না
         console.log(`✅ MongoDB Connected: ${cached.conn.connection.host}`);
         return cached.conn;
     }
     catch (error) {
         console.error(`❌ Error connecting to MongoDB: ${error.message}`);
-        // ভুল হলে ক্যাশ রিসেট করো যাতে পরের রিকোয়েস্ট আবার চেষ্টা করতে পারে
+        // ফেইল করলে পরের বার আবার চেষ্টা করার জন্য promise রিসেট করে দাও
         cached.promise = null;
-        // ডেভেলপমেন্টে প্রসেস এক্সিট, কিন্তু Vercel-এ এরর থ্রো করবে
+        // লোকাল এনভায়রনমেন্টে প্রসেস বন্ধ করবে, কিন্তু Vercel-এ শুধু এরর থ্রো করবে
         if (process.env.NODE_ENV !== 'production' || process.env.VERCEL !== '1') {
             process.exit(1);
         }

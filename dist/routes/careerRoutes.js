@@ -7,10 +7,12 @@ const express_1 = __importDefault(require("express"));
 const careerController_1 = require("../controllers/careerController");
 const authMiddleware_1 = require("../middlewares/authMiddleware");
 const router = express_1.default.Router();
-router.use(authMiddleware_1.protect);
+// Public routes (no authentication required)
 router.get('/', careerController_1.getCareers);
-router.get('/saved', careerController_1.getSavedCareers);
 router.get('/:id', careerController_1.getCareerById);
+// Protected routes (authentication required)
+router.use(authMiddleware_1.protect);
+router.get('/saved', careerController_1.getSavedCareers);
 router.post('/:id/save', careerController_1.saveCareer);
 router.delete('/:id/unsave', careerController_1.unsaveCareer);
 exports.default = router;

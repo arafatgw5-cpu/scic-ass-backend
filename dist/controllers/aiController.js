@@ -1,6 +1,6 @@
 "use strict";
 Object.defineProperty(exports, "__esModule", { value: true });
-exports.analyzeImage = exports.chatWithAI = exports.parseResume = exports.getCareerRecommendations = exports.createResume = void 0;
+exports.textAction = exports.analyzeImage = exports.chatWithAI = exports.parseResume = exports.getCareerRecommendations = exports.createResume = void 0;
 const aiService_1 = require("../services/aiService");
 // ─── GENERATE RESUME ───────────────────────────────────────────────
 const createResume = async (req, res) => {
@@ -127,6 +127,31 @@ const analyzeImage = async (req, res) => {
     }
 };
 exports.analyzeImage = analyzeImage;
+// ─── AI TEXT ACTION (rewrite / grammar / shorten / strengthen / ATS) ──
+// ✅ NEW — powers the summary / experience / project AI buttons on the
+// resume builder. Reuses the same Groq pipeline (primary → fallback)
+// via performTextAction() in aiService, so error handling is identical.
+const textAction = async (req, res) => {
+    try {
+        const { action, text, context, targetRole } = req.body;
+        if (!action || typeof action !== 'string' || !action.trim()) {
+            res.status(400).json({ success: false, message: 'AI action name is required.' });
+            return;
+        }
+        // generate-summary is allowed to start from empty text; everything else needs text.
+        const needsText = action.trim() !== 'generate-summary';
+        if (needsText && (typeof text !== 'string' || !text.trim())) {
+            res.status(400).json({ success: false, message: 'Text is required for this AI action.' });
+            return;
+        }
+        const result = await (0, aiService_1.performTextAction)(action.trim(), typeof text === 'string' ? text : '', typeof context === 'string' ? context : '', typeof targetRole === 'string' ? targetRole : '');
+        res.json({ success: true, message: 'AI action completed', data: { result } });
+    }
+    catch (error) {
+        handleAIError(res, error);
+    }
+};
+exports.textAction = textAction;
 // ─── CENTRALIZED ERROR HANDLER ─────────────────────────────────────
 function handleAIError(res, error) {
     if (error instanceof aiService_1.GeminiError) {

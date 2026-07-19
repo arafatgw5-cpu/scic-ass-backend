@@ -5,6 +5,7 @@ import {
   analyzeResume,
   chatAssistantStream,
   analyzeImageWithGroq,
+  performTextAction,
   GeminiError,
 } from '../services/aiService';
 
@@ -96,7 +97,7 @@ export const chatWithAI = async (req: Request, res: Response): Promise<void> => 
 export const analyzeImage = async (req: Request, res: Response): Promise<void> => {
   const startTime = Date.now();
   console.log("🚀 [Vision API] Request received at /api/ai/vision");
-  
+
   try {
     if (!req.file) {
       console.error("❌ [Vision API] No file found in req.file");
@@ -133,6 +134,39 @@ export const analyzeImage = async (req: Request, res: Response): Promise<void> =
     // 🔥 এই লাইনটি সবচেয়ে গুরুত্বপূর্ণ: এটি Vercel Logs-এ আসল এরর দেখাবে
     console.error("❌ [Vision API] CRITICAL ERROR:", error);
     console.error("❌ [Vision API] Error Stack:", error instanceof Error ? error.stack : 'No stack trace');
+    handleAIError(res, error);
+  }
+};
+
+// ─── AI TEXT ACTION (rewrite / grammar / shorten / strengthen / ATS) ──
+// ✅ NEW — powers the summary / experience / project AI buttons on the
+// resume builder. Reuses the same Groq pipeline (primary → fallback)
+// via performTextAction() in aiService, so error handling is identical.
+export const textAction = async (req: Request, res: Response): Promise<void> => {
+  try {
+    const { action, text, context, targetRole } = req.body;
+
+    if (!action || typeof action !== 'string' || !action.trim()) {
+      res.status(400).json({ success: false, message: 'AI action name is required.' });
+      return;
+    }
+
+    // generate-summary is allowed to start from empty text; everything else needs text.
+    const needsText = action.trim() !== 'generate-summary';
+    if (needsText && (typeof text !== 'string' || !text.trim())) {
+      res.status(400).json({ success: false, message: 'Text is required for this AI action.' });
+      return;
+    }
+
+    const result = await performTextAction(
+      action.trim(),
+      typeof text === 'string' ? text : '',
+      typeof context === 'string' ? context : '',
+      typeof targetRole === 'string' ? targetRole : ''
+    );
+
+    res.json({ success: true, message: 'AI action completed', data: { result } });
+  } catch (error) {
     handleAIError(res, error);
   }
 };

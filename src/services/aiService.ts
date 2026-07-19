@@ -18,7 +18,7 @@ function getGroqClient(): Groq {
       );
     }
     groq = new Groq({ apiKey: GROQ_API_KEY });
-    
+
     console.log('[AI Service] Initialized Groq API:');
     console.log(`  API Key exists: true`);
     console.log(`  Primary model: ${PRIMARY_MODEL}`);
@@ -27,7 +27,7 @@ function getGroqClient(): Groq {
   return groq;
 }
 
-// ─── TYPES ─────────────────────────────────────────────────────────
+// ─── TYPES ────────────────────────────────────────────────────────
 interface ExperienceEntry {
   company?: string;
   role?: string;
@@ -270,7 +270,7 @@ export async function* chatAssistantStream(
   console.log(`[Groq Chat] Request — history: ${history.length} messages, message length: ${message.length}`);
 
   // Convert Gemini history format to Groq/OpenAI history format
-  const groqMessages: any[] = [
+  const groqMessages: { role: 'system' | 'user' | 'assistant'; content: string }[] = [
     {
       role: 'system',
       content: 'You are an AI Career Coach named SkillPilot. Answer concisely and professionally. Help with interview prep, salary negotiation, career planning, and resume advice. Keep context of the conversation.'
@@ -310,6 +310,7 @@ export async function* chatAssistantStream(
     throw new GeminiError(classified.status, classified.message);
   }
 }
+
 // ════════════════════════════════════════════════════════════════════
 // ─── IMAGE UNDERSTANDING (Groq Vision) ─────────────────────────────
 // Additive only — does not touch generateResume / recommendCareers /
@@ -393,7 +394,7 @@ async function callGroqVision(dataUrl: string, userPrompt: string, model: string
           { type: 'image_url', image_url: { url: dataUrl } },
         ],
       },
-    ] as any, // Groq SDK's OpenAI-style types don't yet model multi-part vision content
+    ] as unknown as Groq.Chat.Completions.ChatCompletionMessageParam[],
     temperature: 0.4,
     max_tokens: 1500,
   });
@@ -441,4 +442,92 @@ export async function analyzeImageWithGroq(
       throw new GeminiError(classified.status, classified.message);
     }
   }
+}
+
+// ════════════════════════════════════════════════════════════════════
+// ─── TEXT ACTIONS (summary / experience / project rewriting) ───────
+// Additive only — reuses the existing callGroqJSON() helper so the
+// primary→fallback model logic and error handling stay identical.
+// Powers the AI buttons on the resume builder (Generate / Rewrite /
+// Grammar / Shorter / Stronger / ATS / Experience / Project).
+// ════════════════════════════════════════════════════════════════════
+
+type PromptBuilder = (text: string, role: string, context: string) => string;
+
+const ctxLine = (context: string): string =>
+  context && context.trim()
+    ? `\nTarget role / job-description context (use its keywords naturally):\n${context.trim()}\n`
+    : '';
+
+const jsonOnly =
+  '\n\nRespond with ONLY valid JSON in this exact shape, no markdown, no extra text:\n{"result": "the final text"}';
+
+const ACTION_PROMPTS: Record<string, PromptBuilder> = {
+  'generate-summary': (_text, role, context) =>
+    `You are an expert resume writer. Write a powerful, ATS-friendly professional summary (3-4 sentences) for a ${role}. ` +
+    `Use strong action verbs, convey seniority and impact, and weave in relevant keywords.` +
+    ctxLine(context) + jsonOnly,
+
+  'rewrite-summary': (text, role, context) =>
+    `Rewrite the following professional summary to be more impactful, concise and ATS-friendly for a ${role}, ` +
+    `preserving its original meaning.\n\nTEXT:\n${text}` + ctxLine(context) + jsonOnly,
+
+  'grammar-summary': (text) =>
+    `Fix ALL grammar, spelling, punctuation and awkward phrasing in the text below. ` +
+    `Do not change the meaning or significantly change the length.\n\nTEXT:\n${text}` + jsonOnly,
+
+  'shorter-summary': (text) =>
+    `Condense the text below to a maximum of 2 sentences while keeping the strongest, most relevant points.\n\nTEXT:\n${text}` + jsonOnly,
+
+  'stronger-summary': (text, role, context) =>
+    `Make the text below stronger for a ${role} resume: use power verbs and quantifiable-impact language, ` +
+    `keep roughly the same length.\n\nTEXT:\n${text}` + ctxLine(context) + jsonOnly,
+
+  'ats-summary': (text, role, context) =>
+    `Optimize the summary below for ATS systems targeting a ${role}. Weave in relevant keywords naturally ` +
+    `without keyword stuffing.\n\nTEXT:\n${text}` + ctxLine(context) + jsonOnly,
+
+  'rewrite-exp': (text, role, context) =>
+    `Rewrite these work-experience notes into high-impact, ATS-friendly bullet points for a ${role}. ` +
+    `Start each bullet with a strong action verb.\n\nTEXT:\n${text}` + ctxLine(context) + jsonOnly,
+
+  'quantify-exp': (text) =>
+    `Add realistic, quantifiable metrics (percentages, $ saved, time reduced, users served, etc.) to the ` +
+    `experience bullets below so achievements become measurable. Keep them believable.\n\nTEXT:\n${text}` + jsonOnly,
+
+  'improve-project': (text, role, context) =>
+    `Improve this project description for a ${role} resume: highlight the tech stack, your specific role, ` +
+    `and measurable outcomes/impact.\n\nTEXT:\n${text}` + ctxLine(context) + jsonOnly,
+};
+
+export async function performTextAction(
+  action: string,
+  text: string,
+  context: string,
+  targetRole: string
+): Promise<string> {
+  const builder = ACTION_PROMPTS[action];
+  if (!builder) {
+    throw new GeminiError(400, `Unknown AI action: ${action}`);
+  }
+
+  const prompt = builder(text || '', targetRole || 'a professional role', context || '');
+  console.log(`[Groq TextAction] action=${action}, prompt length=${prompt.length}`);
+
+  // Reuse callGroqJSON -> we asked the model for {"result": "..."}
+  const raw = await callGroqJSON(
+    prompt,
+    action.includes('grammar') || action.includes('shorter') ? 0.2 : 0.7
+  );
+
+  try {
+    const parsed = JSON.parse(raw) as { result?: unknown };
+    if (parsed && typeof parsed.result === 'string' && parsed.result.trim()) {
+      return parsed.result.trim();
+    }
+  } catch {
+    // fall through to raw text
+  }
+  // If the model didn't wrap it in JSON, return the raw text trimmed.
+  return raw.trim();
 }
